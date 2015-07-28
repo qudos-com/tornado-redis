@@ -1064,9 +1064,15 @@ class Client(object):
     def on_unsubscribed(self, channels, *args, **kwargs):
         channels = set(channels)
         self.subscribed -= channels
-        for cb_channels, cb in self.unsubscribe_callbacks:
+        callbacks = self.unsubscribe_callbacks
+        self.unsubscribe_callbacks = []
+        for cb_channels, cb in callbacks:
             cb_channels.difference_update(channels)
-            if not cb_channels:
+            # the callback is only called when the client has been unsubscribed
+            # all of the channels
+            if cb_channels:
+                self.unsubscribe_callbacks.append((cb_channels, cb))
+            else:
                 self._io_loop.add_callback(cb)
 
     def unsubscribe(self, channels, callback=None):

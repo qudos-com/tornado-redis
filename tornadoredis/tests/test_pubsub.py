@@ -90,6 +90,39 @@ class PubSubTestCase(RedisTestCase):
 
     @async_test
     @gen.engine
+    def test_unsubscribe_callbacks(self):
+        def on_message(*args, **kwargs):
+            self._message_count += 1
+
+        yield gen.Task(self.client.subscribe, 'foo')
+        self.client.listen(on_message, (yield gen.Callback('listen')))
+        self.assertTrue(self.client.subscribed)
+
+        cb_check = {}
+
+        @gen.engine
+        def on_unsubscribe1(*args, **kwargs):
+            self.assertFalse(cb_check.get('foo'))
+            self.assertFalse(cb_check.get('bar'))
+            self.assertFalse(self.client.subscribed)
+            cb_check['foo'] = True
+            yield gen.Task(self.client.subscribe, 'bar')
+            self.client.listen(on_message, (yield gen.Callback('listen')))
+            self.assertTrue(self.client.subscribed)
+            self.client.unsubscribe('bar', on_unsubscribe2)
+            yield gen.Wait('listen')
+
+        def on_unsubscribe2(*args, **kwargs):
+            self.assertTrue(cb_check.get('foo'))
+            self.assertFalse(cb_check.get('bar'))
+            cb_check['bar'] = True
+            self.stop()
+
+        self.client.unsubscribe('foo', on_unsubscribe1)
+        yield gen.Wait('listen')
+
+    @async_test
+    @gen.engine
     def test_pub_sub_multiple(self):
         self._expect_messages({'subscribe': ('foo', 1, 'boo', 2),
                                'message': ('foo', 'bar', 'boo', 'zar'),
