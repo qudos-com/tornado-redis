@@ -12,7 +12,7 @@ version = re.compile(r'__version__\s*=\s*[\'\"](.+)[\"\']')
 def get_package_version():
     "returns package version without importing it"
     base = os.path.abspath(os.path.dirname(__file__))
-    with open(os.path.join(base, "tcelery/__init__.py")) as initf:
+    with open(os.path.join(base, "tornadoredis/__init__.py")) as initf:
         for line in initf:
             m = version.match(line.strip())
             if not m:
