@@ -1,4 +1,5 @@
 import json
+import logging
 from collections import defaultdict
 try:
     from collections import Counter
@@ -9,6 +10,7 @@ except ImportError:
 from tornado import stack_context
 from tornado.escape import utf8
 
+logger = logging.getLogger(__name__)
 
 class BaseSubscriber(object):
     """
@@ -38,6 +40,8 @@ class BaseSubscriber(object):
         subscriber - a method or object to be used by on_message handler
         callback - a callback function
         """
+        logger.info('tornadoredis.pubsub.subscribe() channel: {} subscriber: {} callback: {}'.format(
+            channel_name, subscriber, callback))
         if isinstance(channel_name, list) or isinstance(channel_name, tuple):
             if len(channel_name) > 1:
                 _cb = lambda *args, **kwargs: self.subscribe(channel_name[1:],
@@ -47,14 +51,17 @@ class BaseSubscriber(object):
                 _cb = callback
             self.subscribe(channel_name[0], subscriber, callback=_cb)
         else:
+            logger.info('Only 1 channel to subscribe to: {}'.format(channel_name))
             self.subscribers[channel_name][subscriber] += 1
             self.subscriber_count[channel_name] += 1
             if self.subscriber_count[channel_name] == 1:
+                logger.info('Only 1 subscriber for channel {}.'.format(channel_name))
                 if not self.redis.subscribed:
                     if callback:
                         callback = stack_context.wrap(callback)
 
                     def _cb(*args, **kwargs):
+                        logger.info('Calling listen in pubsub.subscribe(). Getting result from command.')
                         self.redis.listen(self.on_message)
                         if callback:
                             callback(*args, **kwargs)
@@ -62,7 +69,8 @@ class BaseSubscriber(object):
                     cb = _cb
                 else:
                     cb = callback
-                self.redis.subscribe(channel_name, callback=cb)
+                # Calling subscribe in tornadoredis.client
+                self.redis.subscribe(channel_name, callback=cb) 
             elif callback:
                 callback(True)
 
@@ -90,6 +98,7 @@ class BaseSubscriber(object):
 
         Override this method if needed.
         """
+        logger.info('Calling on_message in tornadoredis.pubsub.BaseSubscriber')
         if not msg:
             return
 

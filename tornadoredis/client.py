@@ -391,6 +391,9 @@ class Client(object):
         execute_pending = cmd not in ('AUTH', 'SELECT')
 
         callback = kwargs.get('callback', None)
+        log.info('Running {} command with callback {} on channels {}'.format(cmd, callback, args))
+        log.info('See all subscribed channels: {}'.format(self.subscribed))
+        log.info('Selected database: {}'.format(self.selected_db))
         if 'callback' in kwargs:
             del kwargs['callback']
         cmd_line = CmdLine(cmd, *args, **kwargs)
@@ -402,23 +405,36 @@ class Client(object):
 
         n_tries = 2
         while n_tries > 0:
+            log.info('While loop. Try #{}'.format(n_tries))
+            log.info('Current tornado redis connection object: {}'.format(self.connection))
+
             n_tries -= 1
+            log.info('Checking to see if connection is connected...')
             if not self.connection.connected():
+                log.info('Establish Redis connection.')
                 self.connection.connect()
 
+            log.info('Checking to see if connection is ready...')
             if not self.subscribed and not self.connection.ready():
+                log.info('Connection not ready.')
                 yield gen.Task(self.connection.wait_until_ready)
+
+            log.info('Connection info: {}'.format(self.connection.info))
 
             if not self.subscribed and cmd not in ('AUTH', 'SELECT'):
                 if self.password and self.connection.info.get('pass', None) != self.password:
+                    log.info('Connection authentication')
                     yield gen.Task(self.auth, self.password)
                 if self.selected_db and self.connection.info.get('db', 0) != self.selected_db:
+                    log.info('Select database: {}'.format(self.selected_db))
                     yield gen.Task(self.select, self.selected_db)
 
             command = self.format_command(cmd, *args, **kwargs)
             try:
+                log.info('Write command ({}) to connection'.format(command))
                 yield gen.Task(self.connection.write, command)
             except Exception as e:
+                log.exception('Error writing command ({}) to connection'.format(command))
                 self.connection.disconnect()
                 if not n_tries:
                     raise e
@@ -428,12 +444,14 @@ class Client(object):
             listening = ((cmd in PUB_SUB_COMMANDS) or
                          (self.subscribed and cmd == 'PUBLISH'))
             if listening:
+                log.info('In listening')
                 result = True
                 execute_pending = False
                 break
             else:
                 result = None
                 data = yield gen.Task(self.connection.readline)
+                log.info('Finished reading data')
                 if not data:
                     if not n_tries:
                         raise ConnectionError('no data received')
@@ -447,7 +465,9 @@ class Client(object):
         if execute_pending:
             self.connection.execute_pending_command()
 
+        # This callback is from tornadoredis.client.Client._subscribe()
         if callback:
+            log.info('In execute_command callback: {}, result: {}'.format(callback, result))
             callback(result)
 
     @gen.engine
@@ -1027,16 +1047,22 @@ class Client(object):
 
     ### PUBSUB
     def subscribe(self, channels, callback=None):
+        log.info('Subscribing to channel {}'.format(channels))
+        log.info('tornadoredis.client.subscribe(), channels: {}, callback: {}'.format(channels, callback))
+        # Calling _subscribe() in tcelery.redis
         self._subscribe('SUBSCRIBE', channels, callback=callback)
 
     def psubscribe(self, channels, callback=None):
         self._subscribe('PSUBSCRIBE', channels, callback=callback)
 
     def _subscribe(self, cmd, channels, callback=None):
+        log.info('Method name: _subscribe, cmd: {}, channels: {}, callback: {}'.format(cmd, channels, callback))
         if isinstance(channels, str) or (not PY3 and isinstance(channels, unicode)):
             channels = [channels]
         if not self.subscribed:
+            log.info('RedisClient not subscribed')
             listen_callback = None
+            # origina_cb is the callback from tcelery.redis.RedisConsumer.on_result
             original_cb = stack_context.wrap(callback) if callback else None
 
             def _cb(*args, **kwargs):
@@ -1049,6 +1075,7 @@ class Client(object):
 
             callback = _cb
         else:
+            log.info('RedisClient subscribed: {}'.format(self.subscribed))
             listen_callback = callback
             callback = None
         # Use the listen loop to execute subscribe callbacks
@@ -1136,7 +1163,10 @@ class Client(object):
                 if isinstance(data, Exception):
                     raise data
 
+                log.info('Listen callback {}'.format(callback)) #CelerySubscriber.on_message
+
                 if data is None:
+                    log.info('Data is None')
                     # If disconnected from the redis server clear the list
                     # of subscriber this client has subscribed to
                     channels = self.subscribed
@@ -1154,6 +1184,7 @@ class Client(object):
                     raise response
 
                 result = self.format_reply(cmd_listen, response)
+                log.info('Response: {}'.format(result[0:2]))
 
                 if result and result.kind in ('subscribe', 'psubscribe'):
                     self.on_subscribed(result)
@@ -1167,6 +1198,7 @@ class Client(object):
                 if result and result.kind in ('unsubscribe', 'punsubscribe'):
                     self.on_unsubscribed([result.channel])
 
+                # Callback is tcelery.redis.CelerySubscriber.on_message()
                 callback(result)
 
         if exit_callback:
